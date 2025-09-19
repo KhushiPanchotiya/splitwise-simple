@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Who Owes Whom — Simple Splitter</title>
+  <style>
+    :root{font-family:system-ui,-apple-system,Segoe UI,Roboto,'Helvetica Neue',Arial}
+    body{max-width:900px;margin:28px auto;padding:18px;background:#fbfbff;color:#111}
+    h1{font-size:22px;margin-bottom:6px}
+    p.lead{margin-top:0;color:#444}
+    label{display:block;margin:12px 0 6px;font-weight:600}
+    input[type="number"], input[type="text"]{padding:8px;border:1px solid #d6d6e0;border-radius:6px;width:100%;box-sizing:border-box}
+    button{background:#2563eb;color:#fff;border:0;padding:10px 14px;border-radius:8px;cursor:pointer;font-weight:600}
+    button:disabled{opacity:.5;cursor:not-allowed}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+    .person{background:#fff;padding:10px;border-radius:8px;border:1px solid #eee;margin-bottom:10px}
+    .result{background:#fff;padding:12px;border-radius:8px;border:1px solid #eee;margin-top:16px}
+    ul{margin:8px 0 0 18px}
+    .small{font-size:13px;color:#666}
+    footer{margin-top:18px;color:#666;font-size:13px}
+    .controls{display:flex;gap:8px;align-items:center;margin-top:12px}
+  </style>
+</head>
+<body>
+  <h1>Who Owes Whom — Simple Bill Splitter</h1>
+  <p class="lead">Enter people, how much each paid, and the page will compute who should pay whom to settle the bill.</p>
+
+  <label for="count">How many people?</label>
+  <input id="count" type="number" min="2" value="3" />
+  <div style="margin-top:10px">
+    <button id="make">Create fields</button>
+  </div>
+
+  <form id="peopleForm" style="margin-top:18px"></form>
+
+  <div class="controls">
+    <button id="calc" disabled>Calculate Settlements</button>
+    <button id="reset" style="background:#6b7280">Reset</button>
+  </div>
+
+  <div id="output" class="result" style="display:none"></div>
+
+  <footer>
+    Tip: The script computes each person's net balance (paid - share) and then matches debtors to creditors greedily to minimize number of transfers.
+  </footer>
+
+<script>
+(function(){
+  const countInput = document.getElementById('count');
+  const makeBtn = document.getElementById('make');
+  const form = document.getElementById('peopleForm');
+  const calcBtn = document.getElementById('calc');
+  const resetBtn = document.getElementById('reset');
+  const output = document.getElementById('output');
+
+  // If you later want to show a currency symbol, change this to "$" or "€" etc.
+  const currencySymbol = ''; // empty => currency-agnostic numbers
+
+  function createFields(){
+    const n = Math.max(2, Math.floor(Number(countInput.value) || 0));
+    form.innerHTML = '';
+    for(let i=0;i<n;i++){
+      const wrapper = document.createElement('div');
+      wrapper.className = 'person';
+      wrapper.innerHTML = `
+        <label>Person ${i+1} name</label>
+        <input type="text" class="pname" placeholder="Name (e.g. Alice)" value="Person ${i+1}" required />
+        <label>Amount paid (numbers only)</label>
+        <input type="number" class="ppaid" step="0.01" min="0" value="0" />
+      `;
+      form.appendChild(wrapper);
+    }
+    calcBtn.disabled = false;
+    output.style.display = 'none';
+    output.innerHTML = '';
+  }
+
+  function round2(x){
+    return Math.round((x + Number.EPSILON)*100)/100;
+  }
+
+  function formatAmount(x){
+    // Always show two decimals for clarity
+    return currencySymbol + round2(x).toFixed(2);
+  }
+
+  function calculate(){
+    const names = Array.from(document.querySelectorAll('.pname')).map(i=>i.value.trim()||'Anonymous');
+    const paid = Array.from(document.querySelectorAll('.ppaid')).map(i=>Number(i.value)||0);
+    const n = names.length;
+    const total = paid.reduce((a,b)=>a+b,0);
+    const share = total / n;
+    const net = paid.map(p => round2(p - share)); // positive = should receive, negative = owes
+
+    // Build arrays of creditors and debtors
+    const creditors = [], debtors = [];
+    for(let i=0;i<n;i++){
+      const val = round2(net[i]);
+      if(val > 0.005) creditors.push({i, name:names[i], amount: val});
+      else if(val < -0.005) debtors.push({i, name:names[i], amount: -val}); // store positive debt amount
+    }
+
+    // Greedy settlement: match largest debtor with largest creditor
+    creditors.sort((a,b)=>b.amount - a.amount);
+    debtors.sort((a,b)=>b.amount - a.amount);
+
+    const transfers = [];
+    let ci = 0, di = 0;
+    while(ci < creditors.length && di < debtors.length){
+      const cred = creditors[ci];
+      const debt = debtors[di];
+      const x = Math.min(cred.amount, debt.amount);
+      transfers.push({from: debt.name, to: cred.name, amount: round2(x)});
+      cred.amount = round2(cred.amount - x);
+      debt.amount = round2(debt.amount - x);
+      if(Math.abs(cred.amount) < 0.01) ci++;
+      if(Math.abs(debt.amount) < 0.01) di++;
+    }
+
+    // Output
+    let html = `<h3>Summary</h3>`;
+    html += `<p class="small">Total = ${formatAmount(total)} · Each share = ${formatAmount(share)}</p>`;
+    html += `<h4>Net balances</h4><ul>`;
+    for(let i=0;i<n;i++){
+      const v = round2(net[i]);
+      if(v > 0.005) html += `<li>${names[i]} should receive ${formatAmount(v)}</li>`;
+      else if(v < -0.005) html += `<li>${names[i]} should pay ${formatAmount(Math.abs(v))}</li>`;
+      else html += `<li>${names[i]} is settled up</li>`;
+    }
+    html += `</ul>`;
+
+    if(transfers.length === 0) html += `<p><strong>All settled — no transfers needed.</strong></p>`;
+    else{
+      html += `<h4>Suggested transfers</h4><ul>`;
+      transfers.forEach(t=>{
+        html += `<li><strong>${t.from}</strong> → <strong>${t.to}</strong> : ${formatAmount(t.amount)}</li>`;
+      });
+      html += `</ul>`;
+    }
+
+    output.innerHTML = html;
+    output.style.display = 'block';
+  }
+
+  makeBtn.addEventListener('click', (e)=>{ e.preventDefault(); createFields(); });
+  calcBtn.addEventListener('click', (e)=>{ e.preventDefault(); calculate(); });
+  resetBtn.addEventListener('click', (e)=>{ e.preventDefault(); form.innerHTML=''; output.innerHTML=''; output.style.display='none'; calcBtn.disabled = true; });
+
+  // auto-create initial fields on load
+  createFields();
+})();
+</script>
+</body>
+</html>
